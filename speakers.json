@@ -1,0 +1,10 @@
+{
+  "ずんだもん": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-500M-v2-VoiceDesign",
+    "caption": "元気で明るい女性の声。"
+  },
+  "ギャル先生": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-500M-v2-VoiceDesign",
+    "caption": "まじめな女性、少し声は低め。関西弁。"
+  }
+}

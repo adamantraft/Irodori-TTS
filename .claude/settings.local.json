@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /d/GitHub/Irodori-TTS && uv run python -c \"import streamlit\" 2>&1)"
+    ]
+  }
+}

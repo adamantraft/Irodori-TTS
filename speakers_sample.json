@@ -1,0 +1,12 @@
+{
+  "ずんだもん": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-500M-v2-VoiceDesign",
+    "caption": "元気で明るい若い女性の声で、テンポよく話してください。",
+    "seed": 12345
+  },
+  "四国めたん": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-500M-v2-VoiceDesign",
+    "caption": "落ち着いた知的な女性の声で、丁寧にゆっくり話してください。",
+    "seed": 67890
+  }
+}
