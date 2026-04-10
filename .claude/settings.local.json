@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cd /d/GitHub/Irodori-TTS && uv run python -c \"import streamlit\" 2>&1)"
+      "Bash(cd /d/GitHub/Irodori-TTS && uv run python -c \"import streamlit\" 2>&1)",
+      "Bash(uv run python -c \"import streamlit\")",
+      "Bash(uv pip list)",
+      "Bash(uv sync)",
+      "Bash(uv run python -c \"import torch; print(f''CUDA available: {torch.cuda.is_available()}''); print(f''CUDA device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"\"N/A\"\"}'')\")"
     ]
   }
 }

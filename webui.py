@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import tempfile
 import subprocess
 from pathlib import Path
@@ -31,7 +32,9 @@ OUTPUTS_DIR = Path("outputs")
 DEFAULT_MODEL = "Aratako/Irodori-TTS-500M-v2"
 VOICEDESIGN_MODEL = "Aratako/Irodori-TTS-500M-v2-VoiceDesign"
 DEVICE = "cuda"
-PRECISION = "bf16"
+# 環境変数 TTS_PRECISION で精度を指定可能 (デフォルト: bf16)
+# 例: SET TTS_PRECISION=fp32 (Windows) / export TTS_PRECISION=fp32 (Linux/Mac)
+PRECISION = os.getenv("TTS_PRECISION", "bf16")
 
 # -----------------------------------------------------------------------
 # ユーティリティ
