@@ -1,10 +1,26 @@
 {
   "ずんだもん": {
-    "hf_checkpoint": "Aratako/Irodori-TTS-500M-v2-VoiceDesign",
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4.1-Small",
     "caption": "元気で明るい女性の声。"
   },
   "ギャル先生": {
-    "hf_checkpoint": "Aratako/Irodori-TTS-500M-v2-VoiceDesign",
-    "caption": "まじめな女性、少し声は低め。関西弁。"
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4.1-Small",
+    "caption": "元気で明るい女性の声。少し低め。関西弁",
+    "seed": 2221428333897618645
+  },
+  "ナレーション": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4.1-Small",
+    "caption": "落ち着いた男の声。標準語。",
+    "seed": 9223249877283654984
+  },
+  "田中くん": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4.1-Small",
+    "caption": "若い男の声。少し高め。標準語。",
+    "seed": 6074255174381001635
+  },
+  "まじめくん": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4.1-Small",
+    "caption": "落ち着いた男の声。標準語。",
+    "seed": 8264271635007968781
   }
 }

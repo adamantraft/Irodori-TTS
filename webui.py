@@ -15,12 +15,12 @@ from pathlib import Path
 
 import streamlit as st
 
-from huggingface_hub import hf_hub_download
 from irodori_tts.inference_runtime import (
     InferenceRuntime,
     RuntimeKey,
     SamplingRequest,
     default_runtime_device,
+    download_hf_checkpoint,
     save_wav,
 )
 
@@ -29,8 +29,9 @@ from irodori_tts.inference_runtime import (
 # -----------------------------------------------------------------------
 SPEAKERS_FILE = Path("speakers.json")
 OUTPUTS_DIR = Path("outputs")
-DEFAULT_MODEL = "Aratako/Irodori-TTS-500M-v2"
-VOICEDESIGN_MODEL = "Aratako/Irodori-TTS-500M-v2-VoiceDesign"
+# v4.1-Small はテキスト・参照音声・キャプションの3系統を1チェックポイントに統合
+DEFAULT_MODEL = "Aratako/Irodori-TTS-v4.1-Small"
+VOICEDESIGN_MODEL = "Aratako/Irodori-TTS-v4.1-Small"
 DEVICE = "cuda"
 # 環境変数 TTS_PRECISION で精度を指定可能 (デフォルト: bf16)
 # 例: SET TTS_PRECISION=fp32 (Windows) / export TTS_PRECISION=fp32 (Linux/Mac)
@@ -54,7 +55,7 @@ def save_speakers(speakers: dict) -> None:
 
 @st.cache_data(show_spinner=False)
 def resolve_checkpoint_path(hf_repo: str) -> str:
-    return hf_hub_download(repo_id=hf_repo, filename="model.safetensors")
+    return download_hf_checkpoint(hf_repo)
 
 
 @st.cache_resource(show_spinner="モデルを読み込み中...")
@@ -168,6 +169,12 @@ def page_speakers() -> None:
         if seed_mode == "固定値を入力":
             seed_val = st.number_input("Seed値", min_value=0, max_value=2**31, value=12345, step=1)
             new_cfg["seed"] = int(seed_val)
+        else:
+            last_seed = st.session_state.get("vd_last_seed")
+            if last_seed is not None:
+                if st.checkbox(f"試聴したseed（{last_seed}）で声を固定する", key="vd_fix_seed_cb"):
+                    new_cfg["seed"] = last_seed
+                    seed_val = last_seed
 
         # 試聴
         trial_text = st.text_input("試聴テキスト", value="こんにちは、テスト音声です。")
@@ -195,10 +202,9 @@ def page_speakers() -> None:
                     )
                 st.audio(wav_bytes, format="audio/wav")
                 st.success(f"生成完了！使用seed: `{used_seed}`")
+                st.session_state["vd_last_seed"] = used_seed
                 if seed_mode == "ランダム（試聴して決める）":
-                    st.info(f"この声を固定したい場合は seed = `{used_seed}` を設定してください。")
-                    if st.button(f"seed {used_seed} を使う"):
-                        new_cfg["seed"] = used_seed
+                    st.info(f"この声を固定したい場合は「試聴したseed（{used_seed}）で声を固定する」にチェックを入れてください。")
 
     elif mode == "参照音声（ボイスクローン）":
         new_cfg["hf_checkpoint"] = DEFAULT_MODEL
