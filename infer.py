@@ -5,18 +5,15 @@ import argparse
 import math
 from pathlib import Path
 
-from huggingface_hub import hf_hub_download
-
 from irodori_tts.inference_runtime import (
     InferenceRuntime,
     RuntimeKey,
     SamplingRequest,
     default_runtime_device,
+    download_hf_checkpoint,
     resolve_cfg_scales,
     save_wav,
 )
-
-FIXED_SECONDS = 30.0
 
 
 def _parse_optional_float(value: str) -> float | None:
@@ -53,10 +50,7 @@ def _resolve_checkpoint_path(args: argparse.Namespace) -> str:
     if repo_id == "":
         raise ValueError("hf_checkpoint must be non-empty.")
 
-    checkpoint_path = hf_hub_download(
-        repo_id=repo_id,
-        filename="model.safetensors",
-    )
+    checkpoint_path = download_hf_checkpoint(repo_id)
     print(
         f"[checkpoint] downloaded model.safetensors from hf://{repo_id} -> {checkpoint_path}",
         flush=True,
@@ -76,8 +70,16 @@ def main() -> None:
         "--hf-checkpoint",
         default=None,
         help=(
-            "Hugging Face model repo id to download model.safetensors from "
-            "(e.g. your-org/your-model)."
+            "Hugging Face model repo id or repo/subfolder containing model.safetensors "
+            "(e.g. your-org/your-model or your-org/your-model/int8-weight-only)."
+        ),
+    )
+    parser.add_argument(
+        "--lora-adapter",
+        default=None,
+        help=(
+            "Optional PEFT LoRA adapter directory to load dynamically for this inference run. "
+            "The adapter is applied at runtime and is not merged into the base checkpoint."
         ),
     )
     parser.add_argument("--text", required=True)
@@ -119,19 +121,16 @@ def main() -> None:
         "--codec-deterministic-decode",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Use deterministic DACVAE decode watermark-message path (default: enabled).",
-    )
-    parser.add_argument(
-        "--enable-watermark",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Enable DACVAE watermark branch during decode (default: disabled).",
+        help="Use deterministic DACVAE decode path (default: enabled).",
     )
     parser.add_argument(
         "--max-ref-seconds",
         type=float,
-        default=30.0,
-        help="Maximum reference duration in seconds. Set <=0 to disable the cap.",
+        default=None,
+        help=(
+            "Maximum reference duration in seconds. By default, use the checkpoint "
+            "recommendation (30 seconds for legacy checkpoints). Set <=0 to disable the cap."
+        ),
     )
     parser.add_argument(
         "--ref-normalize-db",
@@ -172,6 +171,33 @@ def main() -> None:
         ),
     )
     parser.add_argument("--num-steps", type=int, default=40)
+    parser.add_argument(
+        "--t-schedule-mode",
+        choices=["linear", "sway"],
+        default="linear",
+        help="Timestep schedule for RF Euler sampling.",
+    )
+    parser.add_argument(
+        "--sway-coeff",
+        type=float,
+        default=-1.0,
+        help="Sway Sampling coefficient used when --t-schedule-mode=sway.",
+    )
+    parser.add_argument(
+        "--seconds",
+        type=float,
+        default=None,
+        help=(
+            "Manual output duration in seconds. If omitted, duration-enabled checkpoints "
+            "predict duration automatically; older checkpoints fall back to 30s."
+        ),
+    )
+    parser.add_argument(
+        "--duration-scale",
+        type=float,
+        default=1.0,
+        help="Scale predicted duration when --seconds is omitted (>1 longer, <1 shorter).",
+    )
     parser.add_argument(
         "--num-candidates",
         type=int,
@@ -283,6 +309,16 @@ def main() -> None:
         help="Apply speaker KV scaling only to first N diffusion layers (default: all layers).",
     )
     parser.add_argument(
+        "--speaker-uncond-mode",
+        choices=["mask", "noise"],
+        default="mask",
+        help=(
+            "Unconditional speaker embedding formulation for speaker-conditioned checkpoints. "
+            "'mask': zero out the embedding (default, lower VRAM). "
+            "'noise': replace with Gaussian noise of the same stddev as the reference embedding."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -310,15 +346,49 @@ def main() -> None:
     )
     ref_group = parser.add_mutually_exclusive_group(required=False)
     ref_group.add_argument(
-        "--ref-wav", default=None, help="Reference waveform path for speaker conditioning."
+        "--ref-wav",
+        default=None,
+        help="Reference waveform path for speaker conditioning.",
     )
     ref_group.add_argument(
-        "--ref-latent", default=None, help="Reference latent (.pt) path for speaker conditioning."
+        "--ref-wavs",
+        nargs="+",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Reference waveform paths to encode separately and concatenate in input order "
+            "before applying the checkpoint's maximum reference length. For v4-Small long-reference "
+            "cloning, prefer multiple shorter clips from the same speaker; this matches training. "
+            "A single uninterrupted long recording is accepted but has not been evaluated."
+        ),
+    )
+    ref_group.add_argument(
+        "--ref-latent",
+        default=None,
+        help="Reference latent (.pt) path for speaker conditioning.",
+    )
+    ref_group.add_argument(
+        "--ref-latents",
+        nargs="+",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Reference latent (.pt) paths to concatenate in input order before applying "
+            "the checkpoint's maximum reference length."
+        ),
+    )
+    ref_group.add_argument(
+        "--ref-embed",
+        default=None,
+        help=("Speaker Inversion embedding (.speaker.safetensors) path for speaker conditioning."),
     )
     ref_group.add_argument(
         "--no-ref",
         action="store_true",
-        help="Run without speaker reference conditioning. Use this for voice-design checkpoints.",
+        help=(
+            "Run without speaker reference conditioning. Valid for text-only or "
+            "text+caption-only inference even when the checkpoint supports speaker conditioning."
+        ),
     )
     args = parser.parse_args()
 
@@ -334,17 +404,24 @@ def main() -> None:
             codec_precision=str(args.codec_precision),
             codec_deterministic_encode=bool(args.codec_deterministic_encode),
             codec_deterministic_decode=bool(args.codec_deterministic_decode),
-            enable_watermark=bool(args.enable_watermark),
             compile_model=bool(args.compile_model),
             compile_dynamic=bool(args.compile_dynamic),
         )
     )
-    if runtime.model_cfg.use_speaker_condition and not (
-        args.no_ref or args.ref_wav is not None or args.ref_latent is not None
+    if runtime.model_cfg.use_speaker_condition_resolved and not (
+        args.no_ref
+        or args.ref_wav is not None
+        or args.ref_wavs is not None
+        or args.ref_latent is not None
+        or args.ref_latents is not None
+        or args.ref_embed is not None
     ):
         parser.error(
-            "speaker-conditioned checkpoints require one of --ref-wav, --ref-latent, or --no-ref."
+            "speaker-conditioned checkpoints require one reference option or --no-ref."
         )
+    use_speaker_for_request = bool(
+        runtime.model_cfg.use_speaker_condition_resolved and not args.no_ref
+    )
     cfg_scale_text, cfg_scale_caption, cfg_scale_speaker, scale_messages = resolve_cfg_scales(
         cfg_guidance_mode=str(args.cfg_guidance_mode),
         cfg_scale_text=float(args.cfg_scale_text),
@@ -356,7 +433,7 @@ def main() -> None:
             and args.caption is not None
             and str(args.caption).strip() != ""
         ),
-        use_speaker_condition=bool(runtime.model_cfg.use_speaker_condition),
+        use_speaker_condition=use_speaker_for_request,
     )
     for msg in scale_messages:
         print(msg)
@@ -366,13 +443,17 @@ def main() -> None:
             text=str(args.text),
             caption=None if args.caption is None else str(args.caption),
             ref_wav=args.ref_wav,
+            ref_wavs=args.ref_wavs,
             ref_latent=args.ref_latent,
+            ref_latents=args.ref_latents,
+            ref_embed=args.ref_embed,
             no_ref=bool(args.no_ref),
             ref_normalize_db=args.ref_normalize_db,
             ref_ensure_max=bool(args.ref_ensure_max),
             num_candidates=int(args.num_candidates),
             decode_mode=str(args.decode_mode),
-            seconds=FIXED_SECONDS,
+            seconds=None if args.seconds is None else float(args.seconds),
+            duration_scale=float(args.duration_scale),
             max_ref_seconds=float(args.max_ref_seconds)
             if args.max_ref_seconds is not None
             else None,
@@ -401,11 +482,15 @@ def main() -> None:
             speaker_kv_max_layers=None
             if args.speaker_kv_max_layers is None
             else int(args.speaker_kv_max_layers),
+            speaker_uncond_mode=str(args.speaker_uncond_mode),
             seed=None if args.seed is None else int(args.seed),
+            t_schedule_mode=str(args.t_schedule_mode),
+            sway_coeff=float(args.sway_coeff),
             trim_tail=bool(args.trim_tail),
             tail_window_size=int(args.tail_window_size),
             tail_std_threshold=float(args.tail_std_threshold),
             tail_mean_threshold=float(args.tail_mean_threshold),
+            lora_adapter=None if args.lora_adapter is None else str(args.lora_adapter),
         ),
         log_fn=None,
     )
