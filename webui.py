@@ -11,10 +11,12 @@ import json
 import os
 import tempfile
 import subprocess
+import time
 from pathlib import Path
 
 import streamlit as st
 
+from irodori_tts.gradio_emoji_palette import EMOJI_PALETTE_ITEMS
 from irodori_tts.inference_runtime import (
     InferenceRuntime,
     RuntimeKey,
@@ -68,6 +70,28 @@ def get_runtime(checkpoint_path: str) -> InferenceRuntime:
         codec_precision=PRECISION,
     )
     return InferenceRuntime.from_key(key)
+
+
+def _append_emoji(text_key: str, emoji: str) -> None:
+    st.session_state[text_key] = st.session_state.get(text_key, "") + emoji
+
+
+def emoji_palette(text_key: str, columns: int = 8) -> None:
+    """絵文字ボタンを並べ、押すと text_key のテキスト欄の末尾に絵文字を追加する。"""
+    with st.expander("😊 絵文字で話し方を変える（押すと末尾に追加）"):
+        st.caption("効かせたい文の前後に置いて試してください。位置は入力欄で自由に動かせます。"
+                   "ボタンにカーソルを合わせると説明が出ます。")
+        for row_start in range(0, len(EMOJI_PALETTE_ITEMS), columns):
+            cols = st.columns(columns)
+            for col, item in zip(cols, EMOJI_PALETTE_ITEMS[row_start:row_start + columns]):
+                col.button(
+                    f"{item.emoji} {item.label}",
+                    key=f"emo_{text_key}_{item.emoji}",
+                    help=item.description,
+                    on_click=_append_emoji,
+                    args=(text_key, item.emoji),
+                    use_container_width=True,
+                )
 
 
 def synthesize_one(
@@ -245,6 +269,98 @@ def page_speakers() -> None:
 
 
 # -----------------------------------------------------------------------
+# ページ: 単発生成
+# -----------------------------------------------------------------------
+
+def page_single() -> None:
+    st.header("単発生成")
+    speakers = load_speakers()
+
+    if not speakers:
+        st.warning("先に「話者管理」タブで話者を登録してください。")
+        return
+
+    name = st.selectbox("話者", list(speakers.keys()), key="single_speaker")
+    cfg = speakers[name]
+    if cfg.get("caption"):
+        st.caption(f"声のスタイル: {cfg['caption']}")
+    if cfg.get("ref_wav"):
+        st.caption(f"参照音声: {cfg['ref_wav']}")
+    if not cfg.get("caption") and not cfg.get("ref_wav"):
+        st.caption("参照なし")
+    if cfg.get("seed") is None:
+        st.caption("Seed未固定: 生成のたびに声が少し変わります。気に入ったら下の「この声を固定」で保存できます。")
+    else:
+        st.caption(f"Seed固定: {cfg['seed']}")
+
+    emoji_palette("single_text")
+    text = st.text_area("セリフ", height=120, key="single_text", placeholder="ここに読み上げたい文章を入力")
+
+    with st.expander("生成パラメータ"):
+        steps = st.slider("ステップ数", 20, 100, 40, step=10, key="single_steps",
+                          help="高いほど品質が上がるが遅くなる。")
+        cfg_text = st.slider("CFGスケール（テキスト）", 1.0, 10.0, 5.0, step=0.5, key="single_cfg",
+                             help="高いほどテキスト通りの発音になる。謎音声が出る場合は上げてみてください。")
+        override_seed = st.checkbox("Seedを手動指定する", key="single_seed_on")
+        manual_seed = st.number_input("Seed", min_value=0, max_value=2**31, value=12345, step=1,
+                                      key="single_seed_val", disabled=not override_seed)
+
+    if st.button("🎙️ 生成", type="primary", key="single_go"):
+        if not text.strip():
+            st.warning("セリフを入力してください。")
+        else:
+            ref_wav = cfg.get("ref_wav")
+            caption = cfg.get("caption")
+            no_ref = bool(cfg.get("no_ref", False) or (ref_wav is None and caption is not None))
+            seed = int(manual_seed) if override_seed else cfg.get("seed")
+            with st.spinner("生成中..."):
+                used_seed, wav_bytes = synthesize_one(
+                    text=text,
+                    caption=caption,
+                    ref_wav=ref_wav,
+                    no_ref=no_ref,
+                    seed=seed,
+                    hf_repo=cfg.get("hf_checkpoint", DEFAULT_MODEL),
+                    num_steps=steps,
+                    cfg_scale_text=cfg_text,
+                )
+            OUTPUTS_DIR.mkdir(exist_ok=True)
+            fname = f"single_{name}_{time.strftime('%Y%m%d_%H%M%S')}.wav"
+            (OUTPUTS_DIR / fname).write_bytes(wav_bytes)
+            st.session_state["single_result"] = {
+                "speaker": name, "seed": used_seed, "wav": wav_bytes, "file": fname,
+            }
+
+    res = st.session_state.get("single_result")
+    if res and res["speaker"] == name:
+        st.audio(res["wav"], format="audio/wav")
+        st.success(f"生成完了  seed: `{res['seed']}`  保存先: `{OUTPUTS_DIR / res['file']}`")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.download_button("ダウンロード", data=res["wav"], file_name=res["file"],
+                               mime="audio/wav", key="single_dl")
+        with col2:
+            if cfg.get("seed") != res["seed"] and st.button("この声を固定（seedを話者に保存）", key="single_fix"):
+                speakers[name]["seed"] = res["seed"]
+                save_speakers(speakers)
+                st.experimental_rerun()
+        with col3:
+            if st.button("この音声を参照音声として話者に保存", key="single_setref",
+                         help="以後この音声を手がかりに生成するので、絵文字を入れても声が安定します。"):
+                ref_path = Path("uploads") / f"ref_{name}.wav"
+                ref_path.parent.mkdir(exist_ok=True)
+                ref_path.write_bytes(res["wav"])
+                speakers[name]["ref_wav"] = str(ref_path)
+                speakers[name]["seed"] = res["seed"]
+                save_speakers(speakers)
+                st.experimental_rerun()
+    if cfg.get("ref_wav") and st.button("参照音声を解除", key="single_clearref"):
+        speakers[name].pop("ref_wav", None)
+        save_speakers(speakers)
+        st.experimental_rerun()
+
+
+# -----------------------------------------------------------------------
 # ページ: バッチ生成
 # -----------------------------------------------------------------------
 
@@ -264,9 +380,12 @@ def page_batch() -> None:
         f"{name},こんにちは、{name}です。"
         for name in list(speakers.keys())[:2]
     )
+    if "batch_script" not in st.session_state:
+        st.session_state["batch_script"] = sample_lines
+    emoji_palette("batch_script")
     script_text = st.text_area(
         "台本",
-        value=sample_lines,
+        key="batch_script",
         height=200,
         placeholder="ずんだもん,今日は何の話をしようか？\n四国めたん,天気の話はどうかな。",
     )
@@ -416,7 +535,9 @@ def main() -> None:
     )
     st.title("🎙️ Irodori-TTS Web UI")
 
-    tab1, tab2, tab3 = st.tabs(["話者管理", "バッチ生成", "生成履歴"])
+    tab0, tab1, tab2, tab3 = st.tabs(["単発生成", "話者管理", "バッチ生成", "生成履歴"])
+    with tab0:
+        page_single()
     with tab1:
         page_speakers()
     with tab2:
