@@ -31,6 +31,7 @@ from irodori_tts.inference_runtime import (
 # -----------------------------------------------------------------------
 SPEAKERS_FILE = Path("speakers.json")
 OUTPUTS_DIR = Path("outputs")
+VOICES_DIR = Path("voices")  # ボイスデザインで作った参照音声の保存庫
 # v4.1-Small はテキスト・参照音声・キャプションの3系統を1チェックポイントに統合
 DEFAULT_MODEL = "Aratako/Irodori-TTS-v4.1-Small"
 VOICEDESIGN_MODEL = "Aratako/Irodori-TTS-v4.1-Small"
@@ -38,6 +39,36 @@ DEVICE = "cuda"
 # 環境変数 TTS_PRECISION で精度を指定可能 (デフォルト: bf16)
 # 例: SET TTS_PRECISION=fp32 (Windows) / export TTS_PRECISION=fp32 (Linux/Mac)
 PRECISION = os.getenv("TTS_PRECISION", "bf16")
+
+# ボイスデザイン用の試聴テキスト（参照音声にも使うので、ある程度長めにしてある）
+TRIAL_TEXTS: dict[str, str] = {
+    "ナレーション（落ち着いた説明）": (
+        "朝の光がカーテンの隙間から差し込み、部屋の中をゆっくりと照らしていきます。"
+        "今日は少し早起きをして、温かいお茶を淹れ、ゆったりとした時間を過ごすことにしました。"
+    ),
+    "日常会話（明るい雑談）": (
+        "ねえ、昨日のドラマ見た？もう最高だったんだけど！最後のシーンなんて、思わず声が出ちゃったよ。"
+        "今度一緒に見返そうよ。絶対もう一回泣くと思うから。"
+    ),
+    "感情豊か（喜び→驚き→落ち込み）": (
+        "やった、合格だ！本当に嬉しい、夢みたい。……えっ、待って、これって本当に私の番号？"
+        "見間違いじゃないよね。ああ、よかった。ずっと不安で、昨日の夜は眠れなかったんだから。"
+    ),
+    "ビジネス（丁寧な案内）": (
+        "本日はお忙しい中、ご参加いただき誠にありがとうございます。"
+        "これより、新しいサービスの概要とスケジュールについて、順を追ってご説明いたします。"
+        "ご不明な点がございましたら、最後にまとめてお伺いいたします。"
+    ),
+    "物語（低めの語り）": (
+        "むかしむかし、深い山の奥に、一軒の古びた家がありました。"
+        "そこには年老いた木こりが一人で暮らしていて、毎晩、囲炉裏の火を見つめながら、遠い昔の話を思い出していたそうです。"
+    ),
+    "早口・元気（アナウンス風）": (
+        "さあ始まりました、本日のスペシャルステージ！最初に登場するのは、今もっとも注目のあのグループです。"
+        "皆さん、大きな拍手でお迎えください！準備はいいですか、それでは行きましょう！"
+    ),
+}
+
 
 # -----------------------------------------------------------------------
 # ユーティリティ
@@ -266,6 +297,101 @@ def page_speakers() -> None:
             save_speakers(speakers)
             st.success(f"「{new_name}」を保存しました！")
             st.experimental_rerun()
+
+
+# -----------------------------------------------------------------------
+# ページ: ボイスデザイン
+# -----------------------------------------------------------------------
+
+def page_voicedesign() -> None:
+    st.header("ボイスデザイン")
+    st.caption("声の特徴を文章で指定して候補を作り、気に入ったものに名前をつけて保存庫に送ります。"
+               "保存した声は、他のタブの「話者」からその名前で使えます。")
+
+    caption = st.text_area(
+        "声の特徴（キャプション）", height=80, key="vd_caption",
+        placeholder="例: 落ち着いた若い女性の声。少し低めで、柔らかく話す。標準語。",
+    )
+
+    preset = st.selectbox("試聴テキスト（選ぶと下の欄に入ります）", list(TRIAL_TEXTS.keys()), key="vd_preset")
+    # プリセットを切り替えたときだけ、編集欄を書き換える
+    if st.session_state.get("vd_preset_applied") != preset:
+        st.session_state["vd_text"] = TRIAL_TEXTS[preset]
+        st.session_state["vd_preset_applied"] = preset
+    text = st.text_area("試聴テキスト（自由に編集できます）", height=110, key="vd_text")
+
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        n_cand = st.number_input("一度に作る候補数", min_value=1, max_value=4, value=3, step=1, key="vd_n")
+    with col2:
+        with st.expander("生成パラメータ"):
+            steps = st.slider("ステップ数", 20, 100, 40, step=10, key="vd_steps")
+            cfg_text = st.slider("CFGスケール（テキスト）", 1.0, 10.0, 5.0, step=0.5, key="vd_cfg")
+
+    if st.button("🎲 候補を生成", type="primary", key="vd_go"):
+        if not caption.strip():
+            st.warning("声の特徴を入力してください。")
+        elif not text.strip():
+            st.warning("試聴テキストを入力してください。")
+        else:
+            cands = []
+            bar = st.progress(0, text="生成中...")
+            for i in range(int(n_cand)):
+                bar.progress(int(i / n_cand * 100), text=f"生成中... ({i + 1}/{int(n_cand)})")
+                used_seed, wav = synthesize_one(
+                    text=text, caption=caption, ref_wav=None, no_ref=True, seed=None,
+                    hf_repo=VOICEDESIGN_MODEL, num_steps=steps, cfg_scale_text=cfg_text,
+                )
+                cands.append({"seed": used_seed, "wav": wav, "caption": caption})
+            bar.empty()
+            st.session_state["vd_cands"] = cands
+
+    cands = st.session_state.get("vd_cands", [])
+    if cands:
+        st.subheader("候補")
+        for i, c in enumerate(cands):
+            with st.container():
+                st.markdown(f"**候補 {i + 1}**　seed: `{c['seed']}`")
+                st.audio(c["wav"], format="audio/wav")
+                ncol, bcol = st.columns([3, 1])
+                with ncol:
+                    voice_name = st.text_input("保存する名前", key=f"vd_name_{i}", placeholder="例: ナレーター女性A",
+                                               label_visibility="collapsed")
+                with bcol:
+                    if st.button("💾 保存庫へ", key=f"vd_save_{i}"):
+                        name = voice_name.strip()
+                        if not name:
+                            st.warning("名前を入力してください。")
+                        else:
+                            speakers = load_speakers()
+                            if name in speakers:
+                                st.warning(f"「{name}」は既にあります。別の名前にするか、話者管理で削除してください。")
+                            else:
+                                VOICES_DIR.mkdir(exist_ok=True)
+                                ref_path = VOICES_DIR / f"{name}.wav"
+                                ref_path.write_bytes(c["wav"])
+                                speakers[name] = {
+                                    "hf_checkpoint": VOICEDESIGN_MODEL,
+                                    "caption": c["caption"],
+                                    "seed": c["seed"],
+                                    "ref_wav": str(ref_path),
+                                }
+                                save_speakers(speakers)
+                                st.success(f"「{name}」を保存庫に保存しました。他のタブの話者で使えます。")
+
+    st.divider()
+    st.subheader("保存庫")
+    lib = {n: c for n, c in load_speakers().items()
+           if str(c.get("ref_wav", "")).replace("\\", "/").startswith(f"{VOICES_DIR.as_posix()}/")}
+    if not lib:
+        st.info("まだ保存された声がありません。")
+    for n, c in lib.items():
+        with st.expander(f"🎙️ {n}"):
+            st.caption(c.get("caption", ""))
+            if Path(c["ref_wav"]).exists():
+                st.audio(c["ref_wav"], format="audio/wav")
+            else:
+                st.warning(f"参照音声が見つかりません: {c['ref_wav']}")
 
 
 # -----------------------------------------------------------------------
@@ -535,7 +661,9 @@ def main() -> None:
     )
     st.title("🎙️ Irodori-TTS Web UI")
 
-    tab0, tab1, tab2, tab3 = st.tabs(["単発生成", "話者管理", "バッチ生成", "生成履歴"])
+    tabv, tab0, tab1, tab2, tab3 = st.tabs(["ボイスデザイン", "単発生成", "話者管理", "バッチ生成", "生成履歴"])
+    with tabv:
+        page_voicedesign()
     with tab0:
         page_single()
     with tab1:
