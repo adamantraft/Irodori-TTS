@@ -31,7 +31,9 @@ from irodori_tts.inference_runtime import (
 # -----------------------------------------------------------------------
 SPEAKERS_FILE = Path("speakers.json")
 OUTPUTS_DIR = Path("outputs")
-VOICES_DIR = Path("voices")  # ボイスデザインで作った参照音声の保存庫
+# ボイスデザインで作った参照音声の保存庫（Google Drive同期フォルダ）。環境変数 TTS_VOICES_DIR で変更可能。
+# speakers.json にはファイル名だけを記録し、実体はこのフォルダから探す。
+VOICES_DIR = Path(os.getenv("TTS_VOICES_DIR", r"H:\マイドライブ\Projects\IrodoriVoices"))
 # v4.1-Small はテキスト・参照音声・キャプションの3系統を1チェックポイントに統合
 DEFAULT_MODEL = "Aratako/Irodori-TTS-v4.1-Small"
 VOICEDESIGN_MODEL = "Aratako/Irodori-TTS-v4.1-Small"
@@ -125,6 +127,38 @@ def emoji_palette(text_key: str, columns: int = 8) -> None:
                 )
 
 
+def resolve_ref(ref: str | None) -> str | None:
+    """speakers.json の ref_wav を実ファイルのパスに解決する。ファイル名だけなら保存庫から探す。"""
+    if not ref:
+        return None
+    p = Path(ref)
+    if p.is_absolute() or p.exists():
+        return str(p)
+    return str(VOICES_DIR / ref)
+
+
+def is_library_ref(ref: str | None) -> bool:
+    """保存庫の音声か（ディレクトリ部分を持たないファイル名だけの指定）。"""
+    return bool(ref) and Path(ref).name == ref
+
+
+_ILLEGAL_NAME_CHARS = set('\\/:*?"<>|')
+
+
+def save_voice_to_library(name: str, wav: bytes) -> str | None:
+    """保存庫にwavを書き込み、speakers.json に書くファイル名を返す。失敗時は画面にエラーを出してNone。"""
+    if any(ch in _ILLEGAL_NAME_CHARS for ch in name):
+        st.error('名前に使えない文字があります: \\ / : * ? " < > |')
+        return None
+    try:
+        VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        (VOICES_DIR / f"{name}.wav").write_bytes(wav)
+    except OSError as e:
+        st.error(f"保存庫「{VOICES_DIR}」に書き込めません（Google Driveが起動していますか？）: {e}")
+        return None
+    return f"{name}.wav"
+
+
 def synthesize_one(
     text: str,
     caption: str | None,
@@ -142,7 +176,7 @@ def synthesize_one(
     req = SamplingRequest(
         text=text,
         caption=caption or None,
-        ref_wav=ref_wav or None,
+        ref_wav=resolve_ref(ref_wav),
         no_ref=no_ref,
         seed=seed,
         num_steps=num_steps,
@@ -367,31 +401,31 @@ def page_voicedesign() -> None:
                             if name in speakers:
                                 st.warning(f"「{name}」は既にあります。別の名前にするか、話者管理で削除してください。")
                             else:
-                                VOICES_DIR.mkdir(exist_ok=True)
-                                ref_path = VOICES_DIR / f"{name}.wav"
-                                ref_path.write_bytes(c["wav"])
-                                speakers[name] = {
-                                    "hf_checkpoint": VOICEDESIGN_MODEL,
-                                    "caption": c["caption"],
-                                    "seed": c["seed"],
-                                    "ref_wav": str(ref_path),
-                                }
-                                save_speakers(speakers)
-                                st.success(f"「{name}」を保存庫に保存しました。他のタブの話者で使えます。")
+                                fname = save_voice_to_library(name, c["wav"])
+                                if fname:
+                                    speakers[name] = {
+                                        "hf_checkpoint": VOICEDESIGN_MODEL,
+                                        "caption": c["caption"],
+                                        "seed": c["seed"],
+                                        "ref_wav": fname,
+                                    }
+                                    save_speakers(speakers)
+                                    st.success(f"「{name}」を保存庫に保存しました。他のタブの話者で使えます。")
 
     st.divider()
     st.subheader("保存庫")
-    lib = {n: c for n, c in load_speakers().items()
-           if str(c.get("ref_wav", "")).replace("\\", "/").startswith(f"{VOICES_DIR.as_posix()}/")}
+    st.caption(f"保存先: `{VOICES_DIR}`")
+    lib = {n: c for n, c in load_speakers().items() if is_library_ref(c.get("ref_wav"))}
     if not lib:
         st.info("まだ保存された声がありません。")
     for n, c in lib.items():
         with st.expander(f"🎙️ {n}"):
             st.caption(c.get("caption", ""))
-            if Path(c["ref_wav"]).exists():
-                st.audio(c["ref_wav"], format="audio/wav")
+            ref_path = resolve_ref(c["ref_wav"])
+            if Path(ref_path).exists():
+                st.audio(ref_path, format="audio/wav")
             else:
-                st.warning(f"参照音声が見つかりません: {c['ref_wav']}")
+                st.warning(f"参照音声が見つかりません（Google Driveの同期待ち？）: {ref_path}")
 
 
 # -----------------------------------------------------------------------
@@ -473,13 +507,12 @@ def page_single() -> None:
         with col3:
             if st.button("この音声を参照音声として話者に保存", key="single_setref",
                          help="以後この音声を手がかりに生成するので、絵文字を入れても声が安定します。"):
-                ref_path = Path("uploads") / f"ref_{name}.wav"
-                ref_path.parent.mkdir(exist_ok=True)
-                ref_path.write_bytes(res["wav"])
-                speakers[name]["ref_wav"] = str(ref_path)
-                speakers[name]["seed"] = res["seed"]
-                save_speakers(speakers)
-                st.experimental_rerun()
+                fname = save_voice_to_library(f"ref_{name}", res["wav"])
+                if fname:
+                    speakers[name]["ref_wav"] = fname
+                    speakers[name]["seed"] = res["seed"]
+                    save_speakers(speakers)
+                    st.experimental_rerun()
     if cfg.get("ref_wav") and st.button("参照音声を解除", key="single_clearref"):
         speakers[name].pop("ref_wav", None)
         save_speakers(speakers)

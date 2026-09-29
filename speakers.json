@@ -22,5 +22,11 @@
     "hf_checkpoint": "Aratako/Irodori-TTS-v4.1-Small",
     "caption": "落ち着いた男の声。標準語。",
     "seed": 8264271635007968781
+  },
+  "ナレーター女性A": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4.1-Small",
+    "caption": "若い女性の声。落ち着いている。アナウンサーみたい。",
+    "seed": 6111787331752804118,
+    "ref_wav": "ナレーター女性A.wav"
   }
 }
