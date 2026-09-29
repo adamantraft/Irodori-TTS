@@ -9,7 +9,7 @@ Training and inference code for **Irodori-TTS**, a Flow Matching-based Text-to-S
 For an OpenAI-compatible inference API server, see [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server).
 
 > [!IMPORTANT]
-> `main` tracks the **v4** codebase and is intended for use with the unified **Irodori-TTS-v4.1-Small** release.
+> `main` tracks the **v4/v4.1** codebase, including MeanFlow and the forthcoming v4-Large model.
 > The current code remains backward-compatible with the released v2/v3 base and VoiceDesign checkpoints.
 > Previous codebase states are available through the `v3`, `v2`, and `v1` tags.
 > v1 checkpoints / preprocessing are not compatible with v2/v3/v4.
@@ -32,11 +32,11 @@ For model weights and audio samples, please refer to the [Irodori-TTS-v4.1-Small
 
 ## Architecture
 
-The current release, **`Aratako/Irodori-TTS-v4.1-Small`**, unifies the previous base and
+**Irodori-TTS-v4.1-Small** unifies the previous base and
 VoiceDesign families in one checkpoint. It supports 3-branch conditioning from text,
 reference speech, and caption text. Released v2/v3 checkpoints remain supported for inference.
 
-Shared building blocks:
+The v4-Small architecture consists of:
 
 1. **Shared Text/Caption Encoder**: A fine-tuned ModernBERT backbone processes both reading text and caption text
 2. **Reference Latent Encoder**: Encodes patched reference audio latents for speaker identity conditioning, with up to 120 seconds of combined reference audio in v4-Small
@@ -97,109 +97,29 @@ uv run --no-sync python infer.py \
   --output-wav outputs/sample.wav
 ```
 
-### Inference without Reference Audio
-
-```bash
-uv run --no-sync python infer.py \
-  --hf-checkpoint Aratako/Irodori-TTS-v4.1-Small \
-  --text "こんにちは、私はAIです。これは音声合成のテストです。" \
-  --no-ref \
-  --output-wav outputs/sample.wav
-```
-
-### VoiceDesign Inference
-
-Pure VoiceDesign from text + caption:
-
-```bash
-uv run --no-sync python infer.py \
-  --hf-checkpoint Aratako/Irodori-TTS-v4.1-Small \
-  --text "こんにちは、私はAIです。これは音声合成のテストです。" \
-  --caption "落ち着いた女性の声で、近い距離感でやわらかく自然に読み上げてください。" \
-  --no-ref \
-  --output-wav outputs/sample_voice_design.wav
-```
-
-Style-controlled voice cloning with text + reference speech + caption:
-
-```bash
-uv run --no-sync python infer.py \
-  --hf-checkpoint Aratako/Irodori-TTS-v4.1-Small \
-  --text "どうしてもっと早く教えてくれなかったの？私、ずっと待ってたのに。" \
-  --ref-wav path/to/reference.wav \
-  --caption "深く傷つき、今にも泣き出しそうな様子。声が震えており、悲痛なトーンで弱々しく話す。" \
-  --output-wav outputs/sample_voice_design_clone.wav
-```
-
-Long-reference checkpoints can concatenate multiple reference clips in the specified order:
-
-```bash
-uv run --no-sync python infer.py \
-  --hf-checkpoint Aratako/Irodori-TTS-v4.1-Small \
-  --text "複数の参照音声を使って合成します。" \
-  --caption "落ち着いた自然な声" \
-  --ref-wavs ref_01.wav ref_02.wav ref_03.wav \
-  --output-wav outputs/sample_long_reference.wav
-```
-
-Each waveform is encoded independently before its latent is concatenated. The combined
-reference is trimmed to the checkpoint's maximum reference duration. Use `--ref-latents`
-in the same way for precomputed latent files.
-
-For v4-Small, prefer multiple clean, shorter clips from the same speaker when using a long
-reference. The model was trained with randomly concatenated short utterances, and the measured
-speaker-similarity benefit used the same construction. A combined duration of approximately
-30 seconds already captured most of the measured gain. A single uninterrupted long recording
-is accepted by inference, but that input format has not been evaluated and may behave differently.
-
-### Speaker Inversion Inference
-
-Use a learned Speaker Inversion embedding instead of reference audio:
-
-```bash
-uv run --no-sync python infer.py \
-  --checkpoint path/to/Irodori-TTS-v4.1-Small/model.safetensors \
-  --ref-embed path/to/my.speaker.safetensors \
-  --text "こんにちは、私はAIです。これは音声合成のテストです。" \
-  --output-wav outputs/sample_speaker_inversion.wav
-```
-
 ### Gradio Web UI
+
+For reference-audio cloning and Speaker Inversion:
 
 ```bash
 uv run --no-sync python gradio_app.py --server-name 0.0.0.0 --server-port 7860
 ```
 
-Then access the UI at `http://localhost:7860`.
-The hosted v4-Small demo is available at [Aratako/Irodori-TTS-v4.1-Small-Demo](https://huggingface.co/spaces/Aratako/Irodori-TTS-v4.1-Small-Demo).
-The reference input area accepts one or more audio files, which can be reordered before
-generation and are concatenated in the displayed order. For long-reference cloning, upload
-multiple clean, shorter clips from the same speaker; this matches v4-Small training. A single
-uninterrupted long recording is accepted but has not been evaluated. The standard UI also
-supports a Speaker Inversion embedding through the adjacent tab.
+Open `http://localhost:7860`.
 
-For VoiceDesign checkpoints, use the dedicated UI:
+For VoiceDesign with caption and reference-audio conditioning:
 
 ```bash
 uv run --no-sync python gradio_app_voicedesign.py --server-name 0.0.0.0 --server-port 7861
 ```
 
-The same hosted v4-Small demo supports VoiceDesign and reference-audio conditioning.
-
-Both UIs default to `Aratako/Irodori-TTS-v4.1-Small`. `gradio_app_voicedesign.py` exposes
-caption conditioning, while `gradio_app.py` includes the Speaker Inversion input.
+Open `http://localhost:7861`. Both UIs default to `Aratako/Irodori-TTS-v4.1-Small`.
+The hosted [v4.1-Small demo](https://huggingface.co/spaces/Aratako/Irodori-TTS-v4.1-Small-Demo)
+also supports caption and reference-audio conditioning.
 
 ## Inference
 
-### CLI
-
-```bash
-uv run --no-sync python infer.py \
-  --hf-checkpoint Aratako/Irodori-TTS-v4.1-Small \
-  --text "こんにちは、私はAIです。これは音声合成のテストです。" \
-  --ref-wav path/to/reference.wav \
-  --output-wav outputs/sample.wav
-```
+### Local Checkpoints
 
 Local checkpoints (`.pt` or `.safetensors`) are also supported:
 
@@ -210,6 +130,18 @@ uv run --no-sync python infer.py \
   --ref-wav path/to/reference.wav \
   --output-wav outputs/sample.wav
 ```
+
+### Inference without Reference Audio
+
+```bash
+uv run --no-sync python infer.py \
+  --hf-checkpoint Aratako/Irodori-TTS-v4.1-Small \
+  --text "こんにちは、私はAIです。これは音声合成のテストです。" \
+  --no-ref \
+  --output-wav outputs/sample.wav
+```
+
+### VoiceDesign
 
 v4-Small supports caption conditioning. It can run with
 caption only by passing `--no-ref`, or with both reference speech and caption by passing
@@ -235,6 +167,33 @@ uv run --no-sync python infer.py \
 
 The older `Aratako/Irodori-TTS-500M-v2-VoiceDesign` checkpoint is still supported, but it is caption-only and intentionally ignores speaker/reference conditioning.
 
+### Multiple Reference Clips
+
+Long-reference checkpoints can concatenate multiple reference clips in the specified order:
+
+```bash
+uv run --no-sync python infer.py \
+  --hf-checkpoint Aratako/Irodori-TTS-v4.1-Small \
+  --text "複数の参照音声を使って合成します。" \
+  --caption "落ち着いた自然な声" \
+  --ref-wavs ref_01.wav ref_02.wav ref_03.wav \
+  --output-wav outputs/sample_long_reference.wav
+```
+
+Each waveform is encoded independently before its latent is concatenated. The combined
+reference is trimmed to the checkpoint's maximum reference duration. Use `--ref-latents`
+in the same way for precomputed latent files.
+
+For v4-Small, prefer multiple clean, shorter clips from the same speaker when using a long
+reference. The model was trained with randomly concatenated short utterances, and the measured
+speaker-similarity benefit used the same construction. A combined duration of approximately
+30 seconds already captured most of the measured gain. A single uninterrupted long recording
+is accepted by inference, but that input format has not been evaluated and may behave differently.
+
+In Gradio, upload reference clips in the desired order; they can be reordered before generation.
+
+### LoRA Adapters
+
 LoRA adapter directories can be loaded dynamically at inference time without
 exporting a merged checkpoint:
 
@@ -246,6 +205,8 @@ uv run --no-sync python infer.py \
   --ref-wav path/to/reference.wav \
   --output-wav outputs/sample_lora.wav
 ```
+
+### Speaker Inversion
 
 Speaker Inversion embedding checkpoints can be used with the same base model that
 was used for inversion training. Pass the embedding with `--ref-embed`;
@@ -331,9 +292,9 @@ This produces a JSONL manifest with entries like:
 {"text": "こんにちは", "caption": "落ち着いた、近い距離感の女性話者", "latent_path": "data/latents/00001.pt", "speaker_id": "myorg/my_dataset:speaker_001", "num_frames": 750}
 ```
 
-### 2. Train v4-Small
+### 2. Full-Model Fine-Tuning
 
-Single-GPU training:
+Fine-tune v4-Small from its inference checkpoint on a single GPU:
 
 ```bash
 uv run --no-sync python train.py \
@@ -343,10 +304,9 @@ uv run --no-sync python train.py \
   --init-checkpoint path/to/Irodori-TTS-v4.1-Small/model.safetensors
 ```
 
-The v4-Small config trains the RF body, duration predictor, and shared pretrained text/caption
-backbone jointly. The duration predictor regresses `log1p(num_frames)` with Huber loss and
-uses the token-sum architecture selected from ablations. See the parameter guide for its
-architecture details.
+The v4-Small config updates the RF body, duration predictor, and shared text/caption backbone
+jointly. `--init-checkpoint` loads the model weights and starts a new optimizer and schedule.
+See the [Parameter Guide](docs/parameters.md#duration-predictor) for duration predictor details.
 
 Multi-GPU DDP training:
 
@@ -458,6 +418,37 @@ For checkpoints with a pretrained text encoder, conversion also writes a `tokeni
 directory beside the safetensors file and embeds the encoder architecture config in the file.
 Keep the safetensors file and `tokenizer/` directory together when publishing or moving the model.
 
+## Irodori-TTS-v4.1-Small-MF
+
+[Aratako/Irodori-TTS-v4.1-Small-MF](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-MF)
+is a MeanFlow-distilled version of
+[Aratako/Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small)
+for few-step generation. MeanFlow inference defaults to four sampling steps.
+
+The condition encoders and duration predictor are frozen during distillation, while the entire
+student DiT, including the added interval-length embedding, is trained. MeanFlow checkpoints
+are detected automatically by the CLI and UI.
+
+```bash
+uv run --no-sync python infer.py \
+  --hf-checkpoint Aratako/Irodori-TTS-v4.1-Small-MF \
+  --text "こんにちは、私はAIです。これは音声合成のテストです。" \
+  --ref-wav path/to/reference.wav \
+  --output-wav outputs/sample_meanflow.wav
+```
+
+Distillation uses `configs/train_v4_small_meanflow.yaml`:
+
+```bash
+uv run --no-sync python train.py \
+  --config configs/train_v4_small_meanflow.yaml \
+  --manifest data/train_manifest.jsonl \
+  --output-dir outputs/irodori_v4_1_meanflow
+```
+
+Set `train.teacher_checkpoint` in the config before starting. See the
+[MeanFlow guide](docs/meanflow.md) for inference and distillation details.
+
 ## Quantization
 
 Quantized variants of Irodori-TTS reduce the memory required by the TTS model during
@@ -513,10 +504,13 @@ Irodori-TTS/
 ├── quantize_checkpoint.py      # torchao checkpoint quantization
 │
 ├── docs/
+│   ├── meanflow.md           # MeanFlow inference and distillation guide
 │   └── parameters.md         # Detailed parameter guide
 │
 ├── irodori_tts/                # Core library
+│   ├── attention.py            # Mask-aware SDPA and optional FlashAttention-3 dispatch
 │   ├── model.py                # TextToLatentRFDiT architecture
+│   ├── meanflow.py             # MeanFlow target construction and sampling
 │   ├── rf.py                   # Rectified Flow utilities & Euler CFG sampling
 │   ├── codec.py                # DACVAE codec wrapper
 │   ├── dataset.py              # Dataset and collator
@@ -532,8 +526,12 @@ Irodori-TTS/
 │
 └── configs/
     ├── train_v4_small.yaml                    # Irodori-TTS-v4-Small training config
+    ├── train_v4_small_duration.yaml           # v4.1-Small duration-only update
+    ├── train_v4_small_meanflow.yaml           # v4.1-Small MeanFlow distillation
     ├── train_v4_small_lora.yaml               # v4-Small LoRA fine-tuning config
     ├── train_v4_small_speaker_inversion.yaml  # v4-Small Speaker Inversion config
+    ├── train_v4_large.yaml                    # v4-Large body training
+    ├── train_v4_large_duration.yaml           # v4-Large duration predictor training
     ├── train_500m_v3_phase1_body.yaml        # 500M v3 body training config
     ├── train_500m_v3_phase2_duration.yaml    # 500M v3 duration-predictor training config
     ├── train_500m_v3_voice_design_phase1_body.yaml     # 600M v3 VoiceDesign body config
@@ -559,6 +557,7 @@ Irodori-TTS/
 This project builds upon the following works:
 
 - [Echo-TTS](https://jordandarefsky.com/blog/2025/echo/) — Architecture and training design reference
+- [dots.tts](https://github.com/studio-dots-ai/dots.tts) — MeanFlow implementation reference
 - [DACVAE](https://github.com/facebookresearch/dacvae) — Audio VAE
 - [SilentCipher](https://github.com/sony/silentcipher) — Audio watermarking
 
