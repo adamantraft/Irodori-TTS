@@ -284,7 +284,8 @@ def _move_inference_module(
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.nn.Module:
-    module.to(device=device)
+    # Cast each tensor while moving it, so a CPU-loaded FP32 checkpoint never has to
+    # fit on the device at full precision before being reduced to the runtime dtype.
     with torch.no_grad():
         for param in module.parameters():
             if param.is_floating_point() and param.dtype != dtype:
@@ -299,6 +300,7 @@ def _move_inference_module(
                     child._buffers[name] = buffer.to(device=device, dtype=dtype)
                 elif buffer.device != device:
                     child._buffers[name] = buffer.to(device=device)
+    module.to(device=device)
     return module
 
 
@@ -654,7 +656,6 @@ class InferenceRuntime:
             model_state,
             assign=model_cfg.use_pretrained_text_encoder or quantized_model,
         )
-        model = model.to(model_device)
         model = _move_inference_module(model, device=model_device, dtype=model_dtype)
         model.eval()
         model = _maybe_compile_inference_model(
