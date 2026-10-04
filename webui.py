@@ -16,13 +16,16 @@ from pathlib import Path
 
 import streamlit as st
 
+from irodori_tts import inference_runtime
 from irodori_tts.gradio_emoji_palette import EMOJI_PALETTE_ITEMS
 from irodori_tts.inference_runtime import (
     InferenceRuntime,
     RuntimeKey,
     SamplingRequest,
+    clear_cached_runtime,
     default_runtime_device,
     download_hf_checkpoint,
+    get_cached_runtime,
     save_wav,
 )
 
@@ -34,40 +37,59 @@ OUTPUTS_DIR = Path("outputs")
 # ボイスデザインで作った参照音声の保存庫（Google Drive同期フォルダ）。環境変数 TTS_VOICES_DIR で変更可能。
 # speakers.json にはファイル名だけを記録し、実体はこのフォルダから探す。
 VOICES_DIR = Path(os.getenv("TTS_VOICES_DIR", r"H:\マイドライブ\Projects\IrodoriVoices"))
-# v4.1-Small はテキスト・参照音声・キャプションの3系統を1チェックポイントに統合
-DEFAULT_MODEL = "Aratako/Irodori-TTS-v4.1-Small"
-VOICEDESIGN_MODEL = "Aratako/Irodori-TTS-v4.1-Small"
+# v4系はテキスト・参照音声・キャプションの3系統を1チェックポイントに統合
+# Large: VoiceDesignの再現度・声の類似度が高い / Small: 軽量・高速で漢字の読みがやや正確
+MODELS = {
+    "v4-Large（高品質）": "Aratako/Irodori-TTS-v4-Large",
+    "v4.1-Small（軽量・高速）": "Aratako/Irodori-TTS-v4.1-Small",
+}
+# 環境変数 TTS_DEFAULT_MODEL で新規話者の既定モデルを指定可能 (デフォルト: v4-Large)
+DEFAULT_MODEL = os.getenv("TTS_DEFAULT_MODEL", "Aratako/Irodori-TTS-v4-Large")
+# hf_checkpoint 未指定の旧話者データ用（従来の既定モデル）
+LEGACY_MODEL = "Aratako/Irodori-TTS-v4.1-Small"
 DEVICE = "cuda"
 # 環境変数 TTS_PRECISION で精度を指定可能 (デフォルト: bf16)
 # 例: SET TTS_PRECISION=fp32 (Windows) / export TTS_PRECISION=fp32 (Linux/Mac)
 PRECISION = os.getenv("TTS_PRECISION", "bf16")
 
-# ボイスデザイン用の試聴テキスト（参照音声にも使うので、ある程度長めにしてある）
+# ボイスデザイン用の試聴テキスト。参照音声にも使うので、推奨の約30秒に近い長さにしてある。
+# 1回の生成は最大30秒なので、これ以上長くすると末尾が詰まる（目安: 150字前後で25〜28秒）。
 TRIAL_TEXTS: dict[str, str] = {
     "ナレーション（落ち着いた説明）": (
         "朝の光がカーテンの隙間から差し込み、部屋の中をゆっくりと照らしていきます。"
         "今日は少し早起きをして、温かいお茶を淹れ、ゆったりとした時間を過ごすことにしました。"
+        "窓を開けると、ひんやりとした風が頬をなで、遠くから鳥のさえずりが聞こえてきます。"
+        "こんな静かな朝は、久しぶりかもしれません。"
     ),
     "日常会話（明るい雑談）": (
         "ねえ、昨日のドラマ見た？もう最高だったんだけど！最後のシーンなんて、思わず声が出ちゃったよ。"
         "今度一緒に見返そうよ。絶対もう一回泣くと思うから。"
+        "あ、そうだ、駅前に新しいカフェができたの知ってる？チーズケーキがすごく美味しいらしいんだ。"
+        "今度の休みに行ってみない？"
     ),
     "感情豊か（喜び→驚き→落ち込み）": (
         "やった、合格だ！本当に嬉しい、夢みたい。……えっ、待って、これって本当に私の番号？"
         "見間違いじゃないよね。ああ、よかった。ずっと不安で、昨日の夜は眠れなかったんだから。"
+        "……でも、一緒に頑張ってきたあの子の番号が、どこにもないんだ。"
+        "なんて声をかけたらいいんだろう。素直に喜べないよ。"
     ),
     "ビジネス（丁寧な案内）": (
         "本日はお忙しい中、ご参加いただき誠にありがとうございます。"
         "これより、新しいサービスの概要とスケジュールについて、順を追ってご説明いたします。"
+        "お手元の資料は、全部で三部ございます。"
         "ご不明な点がございましたら、最後にまとめてお伺いいたします。"
+        "それでは、最初のページをご覧ください。"
     ),
     "物語（低めの語り）": (
         "むかしむかし、深い山の奥に、一軒の古びた家がありました。"
         "そこには年老いた木こりが一人で暮らしていて、毎晩、囲炉裏の火を見つめながら、遠い昔の話を思い出していたそうです。"
+        "ある雪の夜のこと、戸を叩く小さな音がしました。"
+        "こんな夜更けに、いったい誰が訪ねてきたのでしょう。"
     ),
     "早口・元気（アナウンス風）": (
         "さあ始まりました、本日のスペシャルステージ！最初に登場するのは、今もっとも注目のあのグループです。"
         "皆さん、大きな拍手でお迎えください！準備はいいですか、それでは行きましょう！"
+        "会場の熱気も最高潮です！このあとも豪華なゲストが続々と登場しますので、最後までお見逃しなく！"
     ),
 }
 
@@ -93,8 +115,39 @@ def resolve_checkpoint_path(hf_repo: str) -> str:
     return download_hf_checkpoint(hf_repo)
 
 
-@st.cache_resource(show_spinner="モデルを読み込み中...")
-def get_runtime(checkpoint_path: str) -> InferenceRuntime:
+def model_label(hf_repo: str) -> str:
+    for label, repo in MODELS.items():
+        if repo == hf_repo:
+            return label
+    return hf_repo
+
+
+def select_model(label: str, key: str, help: str | None = None) -> str:
+    """モデル選択UIを表示し、選ばれたHugging FaceリポジトリIDを返す。"""
+    repos = list(MODELS.values())
+    index = repos.index(DEFAULT_MODEL) if DEFAULT_MODEL in repos else 0
+    return st.selectbox(label, repos, index=index, format_func=model_label, key=key, help=help)
+
+
+def select_model_override(key: str) -> str | None:
+    """話者に登録したモデルを上書きする選択UI。上書きしない場合は None を返す。"""
+    per_speaker = "話者の設定を使う"
+    choice = st.selectbox(
+        "使用モデル",
+        [per_speaker, *MODELS.values()],
+        format_func=lambda v: v if v == per_speaker else f"{model_label(v)} に切り替え",
+        key=key,
+        help="切り替えると話者に登録したモデルを無視して生成します。"
+             "参照音声のない話者は、登録時と違うモデルでは同じseedでも声が変わります。",
+    )
+    return None if choice == per_speaker else choice
+
+
+def speaker_model(cfg: dict, override: str | None = None) -> str:
+    return override or cfg.get("hf_checkpoint", LEGACY_MODEL)
+
+
+def get_runtime(checkpoint_path: str, hf_repo: str) -> InferenceRuntime:
     key = RuntimeKey(
         checkpoint=checkpoint_path,
         model_device=DEVICE,
@@ -102,7 +155,12 @@ def get_runtime(checkpoint_path: str) -> InferenceRuntime:
         codec_device=DEVICE,
         codec_precision=PRECISION,
     )
-    return InferenceRuntime.from_key(key)
+    if inference_runtime._RUNTIME_CACHE_KEY == key:
+        return get_cached_runtime(key)[0]
+    # LargeとSmallはVRAMに同時に載せず、切替時は旧モデルを先に解放する
+    clear_cached_runtime()
+    with st.spinner(f"モデルを読み込み中... ({model_label(hf_repo)})"):
+        return get_cached_runtime(key)[0]
 
 
 def _append_emoji(text_key: str, emoji: str) -> None:
@@ -172,7 +230,7 @@ def synthesize_one(
 ) -> tuple[int, bytes]:
     """音声を1つ生成してWAVバイト列を返す。"""
     ckpt = resolve_checkpoint_path(hf_repo)
-    runtime = get_runtime(ckpt)
+    runtime = get_runtime(ckpt, hf_repo)
     req = SamplingRequest(
         text=text,
         caption=caption or None,
@@ -225,7 +283,7 @@ def page_speakers() -> None:
         st.info("まだ話者が登録されていません。")
     else:
         for name, cfg in list(speakers.items()):
-            with st.expander(f"🎙️ {name}"):
+            with st.expander(f"🎙️ {name}　[{model_label(speaker_model(cfg))}]"):
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     st.json(cfg)
@@ -242,11 +300,16 @@ def page_speakers() -> None:
     mode = st.radio("モード", ["VoiceDesign（テキストで声を指定）", "参照音声（ボイスクローン）", "参照なし"], horizontal=True)
 
     new_name = st.text_input("話者名", placeholder="ずんだもん")
+    model_repo = select_model(
+        "モデル",
+        key="speaker_model",
+        help="Large: VoiceDesignの再現度・声の類似度が高い。Small: 軽量・高速で漢字の読みがやや正確。"
+             "同じseedでもモデルが違うと別の声になります。",
+    )
 
-    new_cfg: dict = {}
+    new_cfg: dict = {"hf_checkpoint": model_repo}
 
     if mode == "VoiceDesign（テキストで声を指定）":
-        new_cfg["hf_checkpoint"] = VOICEDESIGN_MODEL
         caption = st.text_area(
             "キャプション（声のスタイル）",
             placeholder="元気で明るい若い女性の声で、テンポよく話してください。",
@@ -285,7 +348,7 @@ def page_speakers() -> None:
                         ref_wav=None,
                         no_ref=True,
                         seed=seed_val,
-                        hf_repo=VOICEDESIGN_MODEL,
+                        hf_repo=model_repo,
                         num_steps=trial_steps,
                         cfg_scale_text=trial_cfg_text,
                     )
@@ -296,7 +359,6 @@ def page_speakers() -> None:
                     st.info(f"この声を固定したい場合は「試聴したseed（{used_seed}）で声を固定する」にチェックを入れてください。")
 
     elif mode == "参照音声（ボイスクローン）":
-        new_cfg["hf_checkpoint"] = DEFAULT_MODEL
         uploaded = st.file_uploader("参照音声WAVファイル", type=["wav", "mp3", "ogg"])
         if uploaded:
             ref_path = Path("uploads") / uploaded.name
@@ -314,12 +376,11 @@ def page_speakers() -> None:
                         ref_wav=str(ref_path),
                         no_ref=False,
                         seed=None,
-                        hf_repo=DEFAULT_MODEL,
+                        hf_repo=model_repo,
                     )
                 st.audio(wav_bytes, format="audio/wav")
 
     else:  # 参照なし
-        new_cfg["hf_checkpoint"] = DEFAULT_MODEL
         new_cfg["no_ref"] = True
 
     st.divider()
@@ -356,6 +417,11 @@ def page_voicedesign() -> None:
 
     col1, col2 = st.columns([1, 2])
     with col1:
+        vd_model = select_model(
+            "モデル",
+            key="vd_model",
+            help="Large: キャプションの再現度が高い。Small: 軽量・高速で漢字の読みがやや正確。",
+        )
         n_cand = st.number_input("一度に作る候補数", min_value=1, max_value=4, value=3, step=1, key="vd_n")
     with col2:
         with st.expander("生成パラメータ"):
@@ -374,9 +440,9 @@ def page_voicedesign() -> None:
                 bar.progress(int(i / n_cand * 100), text=f"生成中... ({i + 1}/{int(n_cand)})")
                 used_seed, wav = synthesize_one(
                     text=text, caption=caption, ref_wav=None, no_ref=True, seed=None,
-                    hf_repo=VOICEDESIGN_MODEL, num_steps=steps, cfg_scale_text=cfg_text,
+                    hf_repo=vd_model, num_steps=steps, cfg_scale_text=cfg_text,
                 )
-                cands.append({"seed": used_seed, "wav": wav, "caption": caption})
+                cands.append({"seed": used_seed, "wav": wav, "caption": caption, "model": vd_model})
             bar.empty()
             st.session_state["vd_cands"] = cands
 
@@ -385,7 +451,7 @@ def page_voicedesign() -> None:
         st.subheader("候補")
         for i, c in enumerate(cands):
             with st.container():
-                st.markdown(f"**候補 {i + 1}**　seed: `{c['seed']}`")
+                st.markdown(f"**候補 {i + 1}**　seed: `{c['seed']}`　{model_label(c['model'])}")
                 st.audio(c["wav"], format="audio/wav")
                 ncol, bcol = st.columns([3, 1])
                 with ncol:
@@ -404,7 +470,7 @@ def page_voicedesign() -> None:
                                 fname = save_voice_to_library(name, c["wav"])
                                 if fname:
                                     speakers[name] = {
-                                        "hf_checkpoint": VOICEDESIGN_MODEL,
+                                        "hf_checkpoint": c["model"],
                                         "caption": c["caption"],
                                         "seed": c["seed"],
                                         "ref_wav": fname,
@@ -419,7 +485,7 @@ def page_voicedesign() -> None:
     if not lib:
         st.info("まだ保存された声がありません。")
     for n, c in lib.items():
-        with st.expander(f"🎙️ {n}"):
+        with st.expander(f"🎙️ {n}　[{model_label(speaker_model(c))}]"):
             st.caption(c.get("caption", ""))
             ref_path = resolve_ref(c["ref_wav"])
             if Path(ref_path).exists():
@@ -452,6 +518,8 @@ def page_single() -> None:
         st.caption("Seed未固定: 生成のたびに声が少し変わります。気に入ったら下の「この声を固定」で保存できます。")
     else:
         st.caption(f"Seed固定: {cfg['seed']}")
+    st.caption(f"登録モデル: {model_label(speaker_model(cfg))}")
+    single_model = speaker_model(cfg, select_model_override("single_model"))
 
     emoji_palette("single_text")
     text = st.text_area("セリフ", height=120, key="single_text", placeholder="ここに読み上げたい文章を入力")
@@ -480,7 +548,7 @@ def page_single() -> None:
                     ref_wav=ref_wav,
                     no_ref=no_ref,
                     seed=seed,
-                    hf_repo=cfg.get("hf_checkpoint", DEFAULT_MODEL),
+                    hf_repo=single_model,
                     num_steps=steps,
                     cfg_scale_text=cfg_text,
                 )
@@ -489,12 +557,14 @@ def page_single() -> None:
             (OUTPUTS_DIR / fname).write_bytes(wav_bytes)
             st.session_state["single_result"] = {
                 "speaker": name, "seed": used_seed, "wav": wav_bytes, "file": fname,
+                "model": single_model,
             }
 
     res = st.session_state.get("single_result")
     if res and res["speaker"] == name:
         st.audio(res["wav"], format="audio/wav")
-        st.success(f"生成完了  seed: `{res['seed']}`  保存先: `{OUTPUTS_DIR / res['file']}`")
+        st.success(f"生成完了  seed: `{res['seed']}`  モデル: {model_label(res['model'])}  "
+                   f"保存先: `{OUTPUTS_DIR / res['file']}`")
         col1, col2, col3 = st.columns(3)
         with col1:
             st.download_button("ダウンロード", data=res["wav"], file_name=res["file"],
@@ -502,6 +572,8 @@ def page_single() -> None:
         with col2:
             if cfg.get("seed") != res["seed"] and st.button("この声を固定（seedを話者に保存）", key="single_fix"):
                 speakers[name]["seed"] = res["seed"]
+                # seedは生成したモデルとセットで意味を持つので、モデルも合わせて保存する
+                speakers[name]["hf_checkpoint"] = res["model"]
                 save_speakers(speakers)
                 st.experimental_rerun()
         with col3:
@@ -511,6 +583,7 @@ def page_single() -> None:
                 if fname:
                     speakers[name]["ref_wav"] = fname
                     speakers[name]["seed"] = res["seed"]
+                    speakers[name]["hf_checkpoint"] = res["model"]
                     save_speakers(speakers)
                     st.experimental_rerun()
     if cfg.get("ref_wav") and st.button("参照音声を解除", key="single_clearref"):
@@ -550,6 +623,8 @@ def page_batch() -> None:
     )
 
     silence_ms = st.slider("発話間の無音（ミリ秒）", 0, 1000, 300, step=50)
+
+    batch_model = select_model_override("batch_model")
 
     with st.expander("生成パラメータ（謎音声が出る場合に調整）"):
         batch_cfg_text = st.slider("CFGスケール（テキスト）", 1.0, 10.0, 5.0, step=0.5, key="batch_cfg_text",
@@ -602,20 +677,27 @@ def page_batch() -> None:
         status = st.empty()
         part_files: list[Path] = []
 
+        def line_model(speaker: str) -> str:
+            return speaker_model(speakers[speaker], batch_model)
+
+        # モデルの再読み込みを減らすため、同じモデルの行をまとめて生成する（結合は台本順）
+        order = sorted(range(len(lines)), key=lambda i: line_model(lines[i][0]))
+
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
 
-            for idx, (speaker, text) in enumerate(lines):
-                pct = int(idx / len(lines) * 100)
-                progress.progress(pct, text=f"[{idx+1}/{len(lines)}] {speaker}: {text[:20]}...")
-                status.info(f"生成中: {speaker} 「{text[:30]}」")
+            for done, idx in enumerate(order):
+                speaker, text = lines[idx]
+                hf_repo = line_model(speaker)
+                pct = int(done / len(lines) * 100)
+                progress.progress(pct, text=f"[{done+1}/{len(lines)}] {speaker}: {text[:20]}...")
+                status.info(f"生成中: {speaker} 「{text[:30]}」（{model_label(hf_repo)}）")
 
                 sp_cfg = speakers[speaker]
                 ref_wav = sp_cfg.get("ref_wav")
                 caption = sp_cfg.get("caption")
                 seed = sp_cfg.get("seed")
                 no_ref = sp_cfg.get("no_ref", False) or (ref_wav is None and caption is not None)
-                hf_repo = sp_cfg.get("hf_checkpoint", DEFAULT_MODEL)
 
                 used_seed, wav_bytes = synthesize_one(
                     text=text,
@@ -635,6 +717,7 @@ def page_batch() -> None:
                 if keep_parts:
                     (parts_dir / part_path.name).write_bytes(wav_bytes)
 
+            part_files.sort()
             progress.progress(100, text="結合中...")
             status.info("ffmpegで結合中...")
 

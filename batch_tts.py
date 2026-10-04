@@ -29,7 +29,7 @@ CSV形式:
     "キャラ名": {
       "caption": "...",
       "seed": 42,
-      "hf_checkpoint": "Aratako/Irodori-TTS-500M-v2-VoiceDesign"
+      "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large"
     }
 """
 from __future__ import annotations
@@ -42,13 +42,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from huggingface_hub import hf_hub_download
-
 from irodori_tts.inference_runtime import (
     InferenceRuntime,
     RuntimeKey,
     SamplingRequest,
     default_runtime_device,
+    download_hf_checkpoint,
     save_wav,
 )
 
@@ -95,7 +94,8 @@ def resolve_checkpoint(checkpoint: str | None, hf_checkpoint: str | None) -> str
     if not repo_id:
         raise ValueError("checkpoint か hf_checkpoint のどちらかを指定してください。")
     print(f"[checkpoint] HuggingFaceからダウンロード中: {repo_id}", flush=True)
-    return hf_hub_download(repo_id=repo_id, filename="model.safetensors")
+    # トークナイザ同梱モデル（v4系）に対応するため tokenizer/ も一緒に取得する
+    return download_hf_checkpoint(repo_id)
 
 
 def get_runtime(checkpoint_path: str, args: argparse.Namespace) -> InferenceRuntime:
