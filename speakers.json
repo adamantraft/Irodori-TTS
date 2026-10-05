@@ -40,5 +40,21 @@
     "caption": "落ち着いた若い男性アナウンサー。標準的な高さの声。",
     "seed": 914209541284111026,
     "ref_wav": "若い男性アナウンサー（少し低め）.wav"
+  },
+  "30歳くらいの男": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large",
+    "ref_wav": "uploads\\Chara_voice_00031_Chara_voice_00034_joined.wav"
+  },
+  "28歳ギャル": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large",
+    "ref_wav": "uploads\\Chara_voice_00022ギャル_Chara_voice_00024ギャル.wav"
+  },
+  "25歳女性低め": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large",
+    "ref_wav": "uploads\\Chara_voice_00012若い女子アナ_Chara_voice_00013若い女子アナ.wav"
+  },
+  "28歳女性高め": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large",
+    "ref_wav": "uploads\\Chara_voice_00017若い女性_Chara_voice_00019若い女性.wav"
   }
 }
