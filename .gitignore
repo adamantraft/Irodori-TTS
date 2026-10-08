@@ -219,8 +219,11 @@ gradio_outputs/
 gradio_outputs_voicedesign/
 
 *.wav
+*.flac
 outputs/
 data/
+uploads/
 
 # ボイスデザインで作った参照音声（重いので管理しない）
 voices/
+

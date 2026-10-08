@@ -56,5 +56,29 @@
   "28歳女性高め": {
     "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large",
     "ref_wav": "uploads\\Chara_voice_00017若い女性_Chara_voice_00019若い女性.wav"
+  },
+  "25歳男": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large",
+    "ref_wav": "uploads\\Chara_voice_00042.wav",
+    "character": "アンデス男",
+    "note": "アンデス男のキャラシートから作った声。若い男性。104_アンデスウイルス 寸劇の男1。"
+  },
+  "27歳外人風女": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large",
+    "ref_wav": "uploads\\Chara_voice_00050.wav",
+    "character": "アンデス女",
+    "note": "アンデス女のキャラシートから作った声。若い欧米系の女性。104_アンデスウイルス 寸劇の女1。"
+  },
+  "アニメおじいちゃん_01": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large",
+    "character": "採血バス男",
+    "note": "採血バス男のキャラシートから作った声。60代の英国人男性。105_遺伝子検査 寸劇の男1。",
+    "ref_wav": "uploads\\Chara_voice_00052_おじいちゃん.wav"
+  },
+  "アニメおばあちゃん_01": {
+    "hf_checkpoint": "Aratako/Irodori-TTS-v4-Large",
+    "character": "採血バス女",
+    "note": "採血バス女のキャラシートからユーザーが作り直した声（Chara_voice_00063）。60代の英国人女性。105_遺伝子検査 寸劇の女1。",
+    "ref_wav": "uploads\\Chara_voice_00063_おばあちゃん.wav"
   }
 }

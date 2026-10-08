@@ -84,6 +84,10 @@ def speaker_info(name: str, cfg: dict) -> dict:
         # 参照音声かseedがあれば毎回同じ声になる
         "stable": ref is not None or cfg.get("seed") is not None,
     }
+    # character: この声の持ち主のキャラ（キャラシート名）。note: 声の覚え書き。どちらも生成には使わない
+    for key in ("character", "note"):
+        if cfg.get(key):
+            info[key] = cfg[key]
     if ref is not None and not Path(ref).exists():
         info["problem"] = f"参照音声が見つかりません: {ref}"
     return info
